@@ -1,115 +1,214 @@
-import Image from "next/image";
-import { Geist, Geist_Mono } from "next/font/google";
+import axios, { AxiosError } from "axios";
+import { useRouter } from "next/router";
+import { useCallback, useEffect, useState } from "react";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+interface FacebookPage {
+  id: string;
+  name: string;
+  access_token: string;
+}
 
 export default function Home() {
+  const router = useRouter();
+  const [pages, setPages] = useState<FacebookPage[]>([]);
+  const [selectedPage, setSelectedPage] = useState<FacebookPage | null>(null);
+  const [pageToken, setPageToken] = useState("");
+  const [pageId, setPageId] = useState("");
+  const [message, setMessage] = useState("");
+  const [mediaUrl, setMediaUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handlePageSelect = useCallback((page: FacebookPage | null) => {
+    if (!page) return;
+    setSelectedPage(page);
+    setPageToken(page.access_token);
+    setPageId(page.id);
+  }, []);
+
+  useEffect(() => {
+    // Try to load Facebook data from cookie
+    const loadFacebookData = () => {
+      const cookies = document.cookie.split(';');
+      const fbCookie = cookies.find(c => c.trim().startsWith('fbData='));
+
+      if (fbCookie) {
+        try {
+          // Use atob for browser-compatible base64 decoding
+          const base64Data = fbCookie.split('=')[1];
+          const decodedData = atob(base64Data);
+          const fbData = JSON.parse(decodedData);
+          if (fbData.pages && fbData.pages.length > 0) {
+            setPages(fbData.pages);
+            // Automatically select the first page
+            handlePageSelect(fbData.pages[0]);
+          }
+        } catch (err) {
+          console.error('Error parsing Facebook data:', err);
+          setError('Error loading Facebook data. Please try logging in again.');
+        }
+      }
+    };
+
+    loadFacebookData();
+  }, [handlePageSelect]);
+
+  const loginWithFacebook = () => {
+    setLoading(true);
+    window.location.href = "/api/auth/login";
+  };
+
+  const logout = async () => {
+    try {
+      setLoading(true);
+      await axios.post("/api/auth/logout");
+      // Clear state
+      setPages([]);
+      setSelectedPage(null);
+      setPageToken("");
+      setPageId("");
+      setMessage("");
+      setMediaUrl("");
+      setError("");
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+      setError("Failed to logout: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const publishPost = async () => {
+    if (!pageId || !pageToken) {
+      setError("Please select a page first");
+      return;
+    }
+
+    if (!message && !mediaUrl) {
+      setError("Please add a message or media URL");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const res = await axios.post("/api/facebook/publish", {
+        pageId,
+        pageToken,
+        message,
+        mediaUrl,
+        type: "photo",
+      });
+      alert("Post Published Successfully!");
+      // Clear form
+      setMessage("");
+      setMediaUrl("");
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+      setError("Failed to publish post: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div
-      className={`${geistSans.className} ${geistMono.className} font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20`}
-    >
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/pages/index.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+    <div className="flex flex-col items-center justify-center min-h-screen p-4">
+      <div className="w-full max-w-md mb-6">
+        {pages.length > 0 ? (
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold">Facebook Publisher</h1>
+            <div className="flex gap-2">
+              <button
+                onClick={() => router.push('/posts')}
+                className="px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700"
+              >
+                Manage Posts
+              </button>
+              <button
+                onClick={logout}
+                disabled={loading}
+                className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 disabled:bg-gray-400"
+              >
+                Logout
+              </button>
+            </div>
+          </div>
+        ) : (
+          <h1 className="text-2xl font-bold text-center">Facebook Publisher</h1>
+        )}
+      </div>
+
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 w-full max-w-md">
+          {error}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+      )}
+
+      {!pages.length ? (
+        <button
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          onClick={loginWithFacebook}
+          disabled={loading}
         >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+          {loading ? "Loading..." : "Login with Facebook"}
+        </button>
+      ) : (
+        <div className="w-full max-w-md">
+          <div className="mb-4">
+            <label className="block text-gray-700 text-sm font-bold mb-2">
+              Select Page
+            </label>
+            <select
+              className="border rounded w-full py-2 px-3"
+              onChange={(e) => handlePageSelect(pages[e.target.value])}
+              value={selectedPage ? pages.indexOf(selectedPage) : ""}
+            >
+              <option value="">Select a page</option>
+              {pages.map((page, index) => (
+                <option key={page.id} value={index}>
+                  {page.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-gray-700 text-sm font-bold mb-2">
+              Message
+            </label>
+            <textarea
+              placeholder="What's on your mind?"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              className="border rounded w-full py-2 px-3 h-24"
+            />
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-gray-700 text-sm font-bold mb-2">
+              Media URL
+            </label>
+            <input
+              placeholder="Enter image URL"
+              value={mediaUrl}
+              onChange={(e) => setMediaUrl(e.target.value)}
+              className="border rounded w-full py-2 px-3"
+            />
+          </div>
+
+          <button
+            onClick={publishPost}
+            disabled={loading || !selectedPage}
+            className="w-full px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400"
+          >
+            {loading ? "Publishing..." : "Publish Post"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
