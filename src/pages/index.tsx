@@ -1,14 +1,179 @@
+import { useCopilotAction, useCopilotReadable } from "@copilotkit/react-core";
 import { CopilotSidebar } from "@copilotkit/react-ui";
 import "@copilotkit/react-ui/styles.css";
 import axios, { AxiosError } from "axios";
-import { useRouter } from "next/router";
-import { useCallback, useEffect, useState } from "react";
+import { FC, useCallback, useEffect, useState } from "react";
 
-interface FaceBookPublishContextInformation {
-  selectedPageName: string;
-  selectedPageId: string;
-  Posts: FacebookPost[];
+// HITL Confirmation Dialog Component
+interface PublishConfirmDialogProps {
+  message: string;
+  pageName: string;
+  pageId: string;
+  pageToken: string;
+  onComplete: (result: { success: boolean; result?: unknown; error?: string; cancelled?: boolean }) => void;
 }
+
+const PublishConfirmDialog: FC<PublishConfirmDialogProps> = ({
+  message,
+  pageName,
+  pageId,
+  pageToken,
+  onComplete
+}) => {
+  const [step, setStep] = useState<'confirm' | 'publishing' | 'done' | 'error'>('confirm');
+  const [errorMsg, setErrorMsg] = useState<string>('');
+
+  const handleConfirm = async () => {
+    try {
+      setStep('publishing');
+
+      const response = await fetch("/api/copilotkit/actions/publish-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pageId, pageToken, message }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to publish post");
+      }
+
+      const result = await response.json();
+      setStep('done');
+      setTimeout(() => onComplete({ success: true, result }), 1500);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      setErrorMsg(errorMessage);
+      setStep('error');
+      setTimeout(() => onComplete({ success: false, error: errorMessage }), 2000);
+    }
+  };
+
+  const handleCancel = () => {
+    onComplete({ success: false, cancelled: true });
+  };
+
+  return (
+    <div style={{
+      padding: '24px',
+      backgroundColor: '#ffffff',
+      borderRadius: '12px',
+      boxShadow: '0 8px 24px rgba(0, 0, 0, 0.12)',
+      maxWidth: '500px',
+      minWidth: '400px',
+      border: '1px solid #e5e7eb'
+    }}>
+      {step === 'confirm' && (
+        <>
+          <h3 style={{
+            margin: '0 0 16px 0',
+            fontSize: '18px',
+            fontWeight: 600,
+            color: '#111827'
+          }}>
+            📝 Confirm Post Publication
+          </h3>
+          <div style={{
+            backgroundColor: '#f9fafb',
+            padding: '16px',
+            borderRadius: '8px',
+            marginBottom: '16px',
+            border: '1px solid #e5e7eb'
+          }}>
+            <p style={{
+              margin: 0,
+              whiteSpace: 'pre-wrap',
+              lineHeight: '1.5',
+              color: '#374151',
+              fontSize: '14px'
+            }}>
+              {message}
+            </p>
+          </div>
+          <p style={{
+            fontSize: '14px',
+            color: '#6b7280',
+            marginBottom: '20px',
+            margin: '0 0 20px 0'
+          }}>
+            Publishing to: <strong style={{ color: '#111827' }}>{pageName}</strong>
+          </p>
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+            <button
+              onClick={handleCancel}
+              style={{
+                padding: '10px 24px',
+                backgroundColor: '#f3f4f6',
+                color: '#374151',
+                border: '1px solid #d1d5db',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 500,
+                fontSize: '14px',
+                transition: 'all 0.15s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#e5e7eb';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#f3f4f6';
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirm}
+              style={{
+                padding: '10px 24px',
+                backgroundColor: '#6366f1',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 500,
+                fontSize: '14px',
+                transition: 'all 0.15s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#4f46e5';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#6366f1';
+              }}
+            >
+              🚀 Publish Now
+            </button>
+          </div>
+        </>
+      )}
+
+      {step === 'publishing' && (
+        <div style={{ textAlign: 'center', padding: '20px 0' }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>⏳</div>
+          <p style={{ margin: 0, color: '#6b7280', fontSize: '16px' }}>Publishing your post...</p>
+        </div>
+      )}
+
+      {step === 'done' && (
+        <div style={{ textAlign: 'center', padding: '20px 0' }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>✅</div>
+          <p style={{ margin: 0, color: '#059669', fontWeight: 600, fontSize: '16px' }}>
+            Post Published Successfully!
+          </p>
+        </div>
+      )}
+
+      {step === 'error' && (
+        <div style={{ textAlign: 'center', padding: '20px 0' }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>❌</div>
+          <p style={{ margin: 0, color: '#dc2626', fontWeight: 600, fontSize: '16px', marginBottom: '8px' }}>
+            Error: {errorMsg}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface FacebookPage {
   id: string;
@@ -54,7 +219,6 @@ interface FacebookPost {
 }
 
 export default function Home() {
-  const router = useRouter();
   const [pages, setPages] = useState<FacebookPage[]>([]);
   const [selectedPage, setSelectedPage] = useState<FacebookPage | null>(null);
   const [pageToken, setPageToken] = useState("");
@@ -67,11 +231,51 @@ export default function Home() {
   const [posts, setPosts] = useState<FacebookPost[]>([]);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
-  const facebookPublishContext: FaceBookPublishContextInformation = {
-    selectedPageName: selectedPage?.name || "",
-    selectedPageId: selectedPage?.id || "",
-    Posts: posts,
-  };
+  // Make the Facebook page context readable by the agent
+  useCopilotReadable({
+    description: "The currently selected Facebook page information",
+    value: {
+      selectedPageName: selectedPage?.name || "",
+      selectedPageId: selectedPage?.id || "",
+      pageToken: selectedPage?.access_token || "",
+      numberOfPosts: posts.length,
+    },
+  });
+
+  // Register the publishTextPost action with HITL confirmation
+  useCopilotAction({
+    name: "publishTextPost",
+    description: "Publish a text-only post to Facebook. This action requires user confirmation before publishing.",
+    parameters: [
+      {
+        name: "pageId",
+        type: "string",
+        description: "The ID of the Facebook page to post to",
+        required: true,
+      },
+      {
+        name: "pageToken",
+        type: "string",
+        description: "The access token for the Facebook page",
+        required: true,
+      },
+      {
+        name: "message",
+        type: "string",
+        description: "The text content to post on Facebook",
+        required: true,
+      },
+    ],
+    renderAndWait: ({ args, handler }) => (
+      <PublishConfirmDialog
+        message={args.message}
+        pageName={selectedPage?.name || 'your page'}
+        pageId={args.pageId}
+        pageToken={args.pageToken}
+        onComplete={handler}
+      />
+    ),
+  });
 
   const handlePageSelect = useCallback((page: FacebookPage | null) => {
     if (!page) return;
@@ -148,7 +352,7 @@ export default function Home() {
     try {
       setLoading(true);
       setError("");
-      const res = await axios.post("/api/facebook/publish", {
+      await axios.post("/api/facebook/publish", {
         pageId,
         pageToken,
         message,
@@ -169,46 +373,8 @@ export default function Home() {
     }
   };
 
-  // const handlePageSelect = useCallback((page: FacebookPage | null) => {
-  //   if (!page) return;
-  //   setSelectedPage(page);
-  // }, []);
 
-  useEffect(() => {
-    // Load Facebook data from cookie
-    const loadFacebookData = () => {
-      const cookies = document.cookie.split(';');
-      const fbCookie = cookies.find(c => c.trim().startsWith('fbData='));
-
-      if (fbCookie) {
-        try {
-          const base64Data = fbCookie.split('=')[1];
-          const decodedData = atob(base64Data);
-          const fbData = JSON.parse(decodedData);
-          if (fbData.pages && fbData.pages.length > 0) {
-            setPages(fbData.pages);
-            handlePageSelect(fbData.pages[0]);
-          }
-        } catch (err) {
-          console.error('Error parsing Facebook data:', err);
-          setError('Error loading Facebook data. Please try logging in again.');
-        }
-      } else {
-        // No Facebook data, redirect to home
-        router.push('/');
-      }
-    };
-
-    loadFacebookData();
-  }, [router, handlePageSelect]);
-
-  useEffect(() => {
-    if (selectedPage) {
-      fetchPosts();
-    }
-  }, [selectedPage]);
-
-  const fetchPosts = async () => {
+  const fetchPosts = useCallback(async () => {
     if (!selectedPage) return;
 
     try {
@@ -231,7 +397,13 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedPage]);
+
+  useEffect(() => {
+    if (selectedPage) {
+      fetchPosts();
+    }
+  }, [selectedPage, fetchPosts]);
 
   const deletePost = async (postId: string) => {
     if (!selectedPage) return;
@@ -451,33 +623,11 @@ export default function Home() {
         </div>
       </div>
       <CopilotSidebar
+        agent="facebook_publisher_agent"
         labels={{
           title: "Popup Assistant",
-          initial: "Hi! I'm connected to an agent. How can I help?",
+          initial: "Hi! I'm your Facebook Publisher assistant. How can I help?",
         }}
-
-        // facebookPublishContext we need to use this and pass the context
-        instructions={`
-          You are an AI assistant that helps users with their queries on the facebook-publisher project.
-          you can assist with how to publish posts, delete posts, and connect Facebook pages.
-
-          Current Project Context:
-          - This is a Facebook Publisher application that allows users to log in with their Facebook account, select a Facebook page they manage, and publish posts (with text and media) to that page.
-          - Users can also view, and delete their previously published posts.
-          - The application uses the Facebook Graph API to interact with Facebook pages and posts.
-          - The users interact with the application through a web interface built with Next.js and React.
-
-          Current Facebook Publish Context:
-          - Selected Page Name: ${facebookPublishContext.selectedPageName || 'None'}
-          - Selected Page ID: ${facebookPublishContext.selectedPageId || 'None'}
-          - Number of Posts: ${facebookPublishContext.Posts.length}
-
-          Current Facebook Posts Context: ${JSON.stringify(facebookPublishContext.Posts)}
-          - You have access to the list of posts published on the selected Facebook page, including details such as post ID, message content, creation time, permalink URL, and engagement metrics (reactions, comments, shares).
-          You can use this information to assist users with their queries regarding their Facebook posts.
-          
-          Please provide accurate and helpful information based on the above context. 
-            `}
         defaultOpen={true}
         clickOutsideToClose={true}
         hitEscapeToClose={true}
@@ -491,7 +641,8 @@ export default function Home() {
           { title: "How to view my post insights?", message: "Show me the insights for my posts." },
           { title: "How to schedule a post?", message: "Guide me through scheduling a post." },
           { title: "How to edit a published post?", message: "Can I edit a post after publishing it?" },
-          { title: "How to manage post comments?", message: "Help me manage comments on my posts." }
+          { title: "How to manage post comments?", message: "Help me manage comments on my posts." },
+          { title: "Publish a post with text", message: "Help me publish a post that contains only text." },
         ]}
       />
     </div>
