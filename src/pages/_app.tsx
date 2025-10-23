@@ -9,5 +9,6 @@ export default function App({ Component, pageProps }: AppProps) {
       agent="facebook_publisher_agent"
     >
       <Component {...pageProps} />
-    </CopilotKit>);
+    </CopilotKit>
+  );
 }

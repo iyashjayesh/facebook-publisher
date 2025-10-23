@@ -218,11 +218,29 @@ interface FacebookPost {
   };
 }
 
+interface AdAccount {
+  id: string;
+  name: string;
+  account_id: string;
+  account_status: number;
+  currency: string;
+}
+
+interface Campaign {
+  id: string;
+  name: string;
+  objective: string;
+  status: string;
+  created_time: string;
+  updated_time: string;
+}
+
 export default function Home() {
   const [pages, setPages] = useState<FacebookPage[]>([]);
   const [selectedPage, setSelectedPage] = useState<FacebookPage | null>(null);
   const [pageToken, setPageToken] = useState("");
   const [pageId, setPageId] = useState("");
+  const [userToken, setUserToken] = useState("");
   const [message, setMessage] = useState("");
   const [mediaUrl, setMediaUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -230,6 +248,54 @@ export default function Home() {
 
   const [posts, setPosts] = useState<FacebookPost[]>([]);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
+
+  // Ad Campaign States
+  const [activeTab, setActiveTab] = useState<'posts' | 'campaigns'>('posts');
+  const [adAccounts, setAdAccounts] = useState<AdAccount[]>([]);
+  const [selectedAdAccount, setSelectedAdAccount] = useState<AdAccount | null>(null);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [showCampaignWizard, setShowCampaignWizard] = useState(false);
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
+
+  // Campaign Creation States
+  const [campaignData, setCampaignData] = useState({
+    name: '',
+    objective: 'OUTCOME_ENGAGEMENT',
+    status: 'PAUSED'
+  });
+  const [createdCampaignId, setCreatedCampaignId] = useState('');
+
+  // Ad Set States
+  const [adSetData, setAdSetData] = useState({
+    name: '',
+    dailyBudget: 10,
+    billingEvent: 'IMPRESSIONS',
+    optimizationGoal: 'REACH',
+    targeting: {
+      geo_locations: { countries: ['US'] },
+      age_min: 18,
+      age_max: 65
+    },
+    status: 'PAUSED'
+  });
+  const [createdAdSetId, setCreatedAdSetId] = useState('');
+
+  // Creative States
+  const [creativeData, setCreativeData] = useState({
+    name: '',
+    title: '',
+    body: '',
+    linkUrl: '',
+    imageUrl: '',
+    callToActionType: 'LEARN_MORE'
+  });
+  const [createdCreativeId, setCreatedCreativeId] = useState('');
+
+  // Final Ad State
+  const [adData, setAdData] = useState({
+    name: '',
+    status: 'PAUSED'
+  });
 
   // Make the Facebook page context readable by the agent
   useCopilotReadable({
@@ -298,6 +364,10 @@ export default function Home() {
           const fbData = JSON.parse(decodedData);
           if (fbData.pages && fbData.pages.length > 0) {
             setPages(fbData.pages);
+            // Store the user token for ad account access
+            if (fbData.userToken) {
+              setUserToken(fbData.userToken);
+            }
             // Automatically select the first page
             handlePageSelect(fbData.pages[0]);
           }
@@ -325,9 +395,13 @@ export default function Home() {
       setSelectedPage(null);
       setPageToken("");
       setPageId("");
+      setUserToken("");
       setMessage("");
       setMediaUrl("");
       setError("");
+      setAdAccounts([]);
+      setSelectedAdAccount(null);
+      setCampaigns([]);
     } catch (err) {
       const errorMessage = err instanceof AxiosError
         ? err.response?.data?.error || err.message
@@ -440,6 +514,284 @@ export default function Home() {
     return date.toLocaleString();
   };
 
+  // Fetch Ad Accounts
+  const fetchAdAccounts = useCallback(async () => {
+    let tokenToUse = userToken;
+
+    // In development, try to use system user token if user token not available
+    if (!tokenToUse && process.env.NODE_ENV === 'development') {
+      try {
+        const devTokenResponse = await axios.get("/api/facebook/campaigns/dev-token");
+        if (devTokenResponse.data.success) {
+          tokenToUse = devTokenResponse.data.token;
+          console.log("ℹ️ Using system user token for development");
+        }
+      } catch {
+        console.log("ℹ️ System user token not configured. See SYSTEM_USER_SETUP.md");
+      }
+    }
+
+    if (!tokenToUse) {
+      setError("Please log in to access ad accounts. For development, see SYSTEM_USER_SETUP.md to configure system user token.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const response = await axios.post("/api/facebook/campaigns/get-ad-accounts", {
+        accessToken: tokenToUse,
+      });
+
+      if (response.data.success) {
+        setAdAccounts(response.data.adAccounts);
+        if (response.data.adAccounts.length > 0) {
+          setSelectedAdAccount(response.data.adAccounts[0]);
+        }
+      }
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+
+      setError("Failed to fetch ad accounts: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  }, [userToken]);
+
+  // Fetch Campaigns
+  const fetchCampaigns = useCallback(async () => {
+    if (!selectedAdAccount || !userToken) return;
+
+    try {
+      setLoading(true);
+      setError("");
+      const response = await axios.post("/api/facebook/campaigns/list-campaigns", {
+        accountId: selectedAdAccount.account_id,
+        accessToken: userToken, // Use user token for ad account operations
+        limit: 25,
+      });
+
+      if (response.data.success) {
+        setCampaigns(response.data.campaigns);
+      }
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+      setError("Failed to fetch campaigns: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedAdAccount, userToken]);
+
+  // Load ad accounts when switching to campaigns tab
+  useEffect(() => {
+    if (activeTab === 'campaigns' && userToken && adAccounts.length === 0) {
+      fetchAdAccounts();
+    }
+  }, [activeTab, userToken, adAccounts.length, fetchAdAccounts]);
+
+  // Load campaigns when ad account is selected
+  useEffect(() => {
+    if (selectedAdAccount && activeTab === 'campaigns') {
+      fetchCampaigns();
+    }
+  }, [selectedAdAccount, activeTab, fetchCampaigns]);
+
+  // Create Campaign
+  const createCampaign = async () => {
+    if (!selectedAdAccount || !userToken) {
+      setError("Please select an ad account first");
+      return;
+    }
+
+    if (!campaignData.name) {
+      setError("Campaign name is required");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const response = await axios.post("/api/facebook/campaigns/create-campaign", {
+        accountId: selectedAdAccount.account_id,
+        accessToken: userToken, // Use user token for ad account operations
+        name: campaignData.name,
+        objective: campaignData.objective,
+        status: campaignData.status,
+      });
+
+      if (response.data.success) {
+        setCreatedCampaignId(response.data.campaign.id);
+        setWizardStep(2);
+        alert("Campaign created successfully!");
+      }
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+      setError("Failed to create campaign: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Create Ad Set
+  const createAdSet = async () => {
+    if (!selectedAdAccount || !userToken || !createdCampaignId) {
+      setError("Campaign must be created first");
+      return;
+    }
+
+    if (!adSetData.name) {
+      setError("Ad Set name is required");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const response = await axios.post("/api/facebook/campaigns/create-adset", {
+        accountId: selectedAdAccount.account_id,
+        accessToken: userToken, // Use user token for ad account operations
+        campaignId: createdCampaignId,
+        name: adSetData.name,
+        dailyBudget: adSetData.dailyBudget,
+        billingEvent: adSetData.billingEvent,
+        optimizationGoal: adSetData.optimizationGoal,
+        targeting: adSetData.targeting,
+        status: adSetData.status,
+      });
+
+      if (response.data.success) {
+        setCreatedAdSetId(response.data.adset.id);
+        setWizardStep(3);
+        alert("Ad Set created successfully!");
+      }
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+      setError("Failed to create ad set: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Create Creative
+  const createCreative = async () => {
+    if (!selectedAdAccount || !userToken || !selectedPage || !selectedPage.id) {
+      setError("Page must be selected first");
+      return;
+    }
+
+    if (!creativeData.name || !creativeData.body) {
+      setError("Creative name and body are required");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const response = await axios.post("/api/facebook/campaigns/create-creative", {
+        accountId: selectedAdAccount.account_id,
+        accessToken: userToken, // Use user token for ad account operations
+        name: creativeData.name,
+        pageId: selectedPage.id,
+        title: creativeData.title,
+        body: creativeData.body,
+        linkUrl: creativeData.linkUrl,
+        imageUrl: creativeData.imageUrl,
+        callToAction: {
+          type: creativeData.callToActionType,
+          value: { link: creativeData.linkUrl }
+        }
+      });
+
+      if (response.data.success) {
+        setCreatedCreativeId(response.data.creative.id);
+        setWizardStep(4);
+        alert("Ad Creative created successfully!");
+      }
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+      setError("Failed to create creative: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Create Final Ad
+  const createAd = async () => {
+    if (!selectedAdAccount || !userToken || !createdAdSetId || !createdCreativeId) {
+      setError("Ad Set and Creative must be created first");
+      return;
+    }
+
+    if (!adData.name) {
+      setError("Ad name is required");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const response = await axios.post("/api/facebook/campaigns/create-ad", {
+        accountId: selectedAdAccount.account_id,
+        accessToken: userToken, // Use user token for ad account operations
+        name: adData.name,
+        adsetId: createdAdSetId,
+        creativeId: createdCreativeId,
+        status: adData.status,
+      });
+
+      if (response.data.success) {
+        alert("Ad created successfully! Your campaign is ready.");
+        // Reset wizard
+        setShowCampaignWizard(false);
+        setWizardStep(1);
+        setCreatedCampaignId('');
+        setCreatedAdSetId('');
+        setCreatedCreativeId('');
+        setCampaignData({ name: '', objective: 'OUTCOME_ENGAGEMENT', status: 'PAUSED' });
+        setAdSetData({
+          name: '',
+          dailyBudget: 10,
+          billingEvent: 'IMPRESSIONS',
+          optimizationGoal: 'REACH',
+          targeting: {
+            geo_locations: { countries: ['US'] },
+            age_min: 18,
+            age_max: 65
+          },
+          status: 'PAUSED'
+        });
+        setCreativeData({
+          name: '',
+          title: '',
+          body: '',
+          linkUrl: '',
+          imageUrl: '',
+          callToActionType: 'LEARN_MORE'
+        });
+        setAdData({ name: '', status: 'PAUSED' });
+        // Refresh campaigns list
+        fetchCampaigns();
+      }
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+      setError("Failed to create ad: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
@@ -477,148 +829,587 @@ export default function Home() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Publisher Form */}
-              <div className="bg-white rounded-lg shadow-sm p-6">
-                <h2 className="text-xl font-semibold text-gray-900 mb-6">Create New Post</h2>
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Select Page
-                    </label>
-                    <select
-                      className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
-                      onChange={(e) => handlePageSelect(pages[e.target.value])}
-                      value={selectedPage ? pages.indexOf(selectedPage) : ""}
+            <>
+              {/* Tabs */}
+              <div className="mb-6">
+                <div className="border-b border-gray-200">
+                  <nav className="-mb-px flex space-x-8">
+                    <button
+                      onClick={() => setActiveTab('posts')}
+                      className={`${activeTab === 'posts'
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
                     >
-                      <option value="">Select a page</option>
-                      {pages.map((page, index) => (
-                        <option key={page.id} value={index}>
-                          {page.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Message
-                    </label>
-                    <textarea
-                      placeholder="What's on your mind?"
-                      value={message}
-                      onChange={(e) => setMessage(e.target.value)}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm h-32"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Media URL
-                    </label>
-                    <input
-                      type="url"
-                      placeholder="Enter image URL"
-                      value={mediaUrl}
-                      onChange={(e) => setMediaUrl(e.target.value)}
-                      className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                    />
-                  </div>
-
-                  <button
-                    onClick={publishPost}
-                    disabled={loading || !selectedPage}
-                    className="w-full inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:bg-gray-400"
-                  >
-                    {loading ? (
-                      <>
-                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Publishing...
-                      </>
-                    ) : (
-                      "Publish Post"
-                    )}
-                  </button>
+                      Posts
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('campaigns')}
+                      className={`${activeTab === 'campaigns'
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+                    >
+                      Ad Campaigns
+                    </button>
+                  </nav>
                 </div>
               </div>
 
-              {/* Posts List */}
-              <div className="bg-white rounded-lg shadow-sm p-6">
-                <h2 className="text-xl font-semibold text-gray-900 mb-6">Recent Posts</h2>
-                {loading ? (
-                  <div className="text-center py-12">
-                    <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-                    <p className="mt-4 text-gray-600">Loading posts...</p>
-                  </div>
-                ) : posts.length === 0 ? (
-                  <div className="text-center py-12">
-                    <p className="text-gray-600 text-lg">No posts found for this page.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-6">
-                    {posts.map((post) => {
-                      const imageUrl = post.attachments?.data?.[0]?.media?.image?.src;
-                      return (
-                        <div
-                          key={post.id}
-                          className="border border-gray-200 rounded-lg overflow-hidden hover:shadow-md transition-shadow"
+              {/* Posts Tab Content */}
+              {activeTab === 'posts' && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Publisher Form */}
+                  <div className="bg-white rounded-lg shadow-sm p-6">
+                    <h2 className="text-xl font-semibold text-gray-900 mb-6">Create New Post</h2>
+                    <div className="space-y-6">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Select Page
+                        </label>
+                        <select
+                          className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
+                          onChange={(e) => handlePageSelect(pages[e.target.value])}
+                          value={selectedPage ? pages.indexOf(selectedPage) : ""}
                         >
-                          {imageUrl && (
-                            <img
-                              src={imageUrl}
-                              alt="Post"
-                              className="w-full h-48 object-cover"
-                            />
-                          )}
-                          <div className="p-4">
-                            <p className="text-gray-800 mb-3 line-clamp-3">
-                              {post.message || "(No text content)"}
-                            </p>
+                          <option value="">Select a page</option>
+                          {pages.map((page, index) => (
+                            <option key={page.id} value={index}>
+                              {page.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                            <div className="flex gap-4 text-sm text-gray-600 mb-3">
-                              {post.reactions && (
-                                <span>👍 {post.reactions.summary.total_count}</span>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Message
+                        </label>
+                        <textarea
+                          placeholder="What's on your mind?"
+                          value={message}
+                          onChange={(e) => setMessage(e.target.value)}
+                          className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm h-32"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Media URL
+                        </label>
+                        <input
+                          type="url"
+                          placeholder="Enter image URL"
+                          value={mediaUrl}
+                          onChange={(e) => setMediaUrl(e.target.value)}
+                          className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                        />
+                      </div>
+
+                      <button
+                        onClick={publishPost}
+                        disabled={loading || !selectedPage}
+                        className="w-full inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:bg-gray-400"
+                      >
+                        {loading ? (
+                          <>
+                            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Publishing...
+                          </>
+                        ) : (
+                          "Publish Post"
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Posts List */}
+                  <div className="bg-white rounded-lg shadow-sm p-6">
+                    <h2 className="text-xl font-semibold text-gray-900 mb-6">Recent Posts</h2>
+                    {loading ? (
+                      <div className="text-center py-12">
+                        <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+                        <p className="mt-4 text-gray-600">Loading posts...</p>
+                      </div>
+                    ) : posts.length === 0 ? (
+                      <div className="text-center py-12">
+                        <p className="text-gray-600 text-lg">No posts found for this page.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                        {posts.map((post) => {
+                          const imageUrl = post.attachments?.data?.[0]?.media?.image?.src;
+                          return (
+                            <div
+                              key={post.id}
+                              className="border border-gray-200 rounded-lg overflow-hidden hover:shadow-md transition-shadow"
+                            >
+                              {imageUrl && (
+                                <img
+                                  src={imageUrl}
+                                  alt="Post"
+                                  className="w-full h-48 object-cover"
+                                />
                               )}
-                              {post.comments && (
-                                <span>💬 {post.comments.summary.total_count}</span>
-                              )}
-                              {post.shares && (
-                                <span>🔄 {post.shares.count}</span>
-                              )}
+                              <div className="p-4">
+                                <p className="text-gray-800 mb-3 line-clamp-3">
+                                  {post.message || "(No text content)"}
+                                </p>
+
+                                <div className="flex gap-4 text-sm text-gray-600 mb-3">
+                                  {post.reactions && (
+                                    <span>👍 {post.reactions.summary.total_count}</span>
+                                  )}
+                                  {post.comments && (
+                                    <span>💬 {post.comments.summary.total_count}</span>
+                                  )}
+                                  {post.shares && (
+                                    <span>🔄 {post.shares.count}</span>
+                                  )}
+                                </div>
+
+                                <p className="text-xs text-gray-500 mb-3">
+                                  {formatDate(post.created_time)}
+                                </p>
+
+                                <div className="flex gap-2">
+                                  <a
+                                    href={post.permalink_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 text-center"
+                                  >
+                                    View on Facebook
+                                  </a>
+                                  <button
+                                    onClick={() => deletePost(post.id)}
+                                    disabled={deletingPostId === post.id}
+                                    className="px-3 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 disabled:bg-gray-400"
+                                  >
+                                    {deletingPostId === post.id ? "..." : "Delete"}
+                                  </button>
+                                </div>
+                              </div>
                             </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
-                            <p className="text-xs text-gray-500 mb-3">
-                              {formatDate(post.created_time)}
-                            </p>
+              {/* Ad Campaigns Tab Content */}
+              {activeTab === 'campaigns' && (
+                <div className="space-y-6">
+                  {/* Ad Account Selection */}
+                  <div className="bg-white rounded-lg shadow-sm p-6">
+                    <h2 className="text-xl font-semibold text-gray-900 mb-4">Select Ad Account</h2>
+                    {adAccounts.length === 0 ? (
+                      <div className="text-center py-8">
+                        <p className="text-gray-600 mb-4">
+                          {loading ? 'Loading ad accounts...' : 'No ad accounts found.'}
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Ad Account
+                        </label>
+                        <select
+                          className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 rounded-md"
+                          onChange={(e) => setSelectedAdAccount(adAccounts[parseInt(e.target.value)])}
+                          value={selectedAdAccount ? adAccounts.indexOf(selectedAdAccount) : ""}
+                        >
+                          <option value="">Select an ad account</option>
+                          {adAccounts.map((account, index) => (
+                            <option key={account.id} value={index}>
+                              {account.name} ({account.account_id})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
 
-                            <div className="flex gap-2">
-                              <a
-                                href={post.permalink_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 text-center"
-                              >
-                                View on Facebook
-                              </a>
-                              <button
-                                onClick={() => deletePost(post.id)}
-                                disabled={deletingPostId === post.id}
-                                className="px-3 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 disabled:bg-gray-400"
-                              >
-                                {deletingPostId === post.id ? "..." : "Delete"}
-                              </button>
+                  {/* Create Campaign Button */}
+                  {selectedAdAccount && !showCampaignWizard && (
+                    <div className="bg-white rounded-lg shadow-sm p-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-xl font-semibold text-gray-900">Your Campaigns</h2>
+                        <button
+                          onClick={() => setShowCampaignWizard(true)}
+                          className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium"
+                        >
+                          + Create New Campaign
+                        </button>
+                      </div>
+
+                      {/* Campaigns List */}
+                      <div className="space-y-4">
+                        {campaigns.length === 0 ? (
+                          <div className="text-center py-8">
+                            <p className="text-gray-600">No campaigns found. Create your first campaign!</p>
+                          </div>
+                        ) : (
+                          campaigns.map((campaign) => (
+                            <div key={campaign.id} className="border border-gray-200 rounded-lg p-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <h3 className="font-semibold text-gray-900">{campaign.name}</h3>
+                                  <p className="text-sm text-gray-600">
+                                    Objective: {campaign.objective} | Status: <span className={campaign.status === 'ACTIVE' ? 'text-green-600' : 'text-gray-600'}>{campaign.status}</span>
+                                  </p>
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    Created: {formatDate(campaign.created_time)}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Campaign Creation Wizard */}
+                  {showCampaignWizard && selectedAdAccount && (
+                    <div className="bg-white rounded-lg shadow-sm p-6">
+                      <div className="mb-6">
+                        <h2 className="text-xl font-semibold text-gray-900 mb-4">Create Ad Campaign</h2>
+
+                        {/* Wizard Steps Indicator */}
+                        <div className="flex items-center justify-between mb-8">
+                          <div className="flex items-center space-x-2">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${wizardStep >= 1 ? 'bg-blue-600 text-white' : 'bg-gray-300'}`}>
+                              1
+                            </div>
+                            <span className="text-sm font-medium">Campaign</span>
+                          </div>
+                          <div className="flex-1 h-1 bg-gray-300 mx-2">
+                            <div className={`h-full ${wizardStep >= 2 ? 'bg-blue-600' : ''}`} style={{ width: wizardStep >= 2 ? '100%' : '0%' }}></div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${wizardStep >= 2 ? 'bg-blue-600 text-white' : 'bg-gray-300'}`}>
+                              2
+                            </div>
+                            <span className="text-sm font-medium">Ad Set</span>
+                          </div>
+                          <div className="flex-1 h-1 bg-gray-300 mx-2">
+                            <div className={`h-full ${wizardStep >= 3 ? 'bg-blue-600' : ''}`} style={{ width: wizardStep >= 3 ? '100%' : '0%' }}></div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${wizardStep >= 3 ? 'bg-blue-600 text-white' : 'bg-gray-300'}`}>
+                              3
+                            </div>
+                            <span className="text-sm font-medium">Creative</span>
+                          </div>
+                          <div className="flex-1 h-1 bg-gray-300 mx-2">
+                            <div className={`h-full ${wizardStep >= 4 ? 'bg-blue-600' : ''}`} style={{ width: wizardStep >= 4 ? '100%' : '0%' }}></div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${wizardStep >= 4 ? 'bg-blue-600 text-white' : 'bg-gray-300'}`}>
+                              4
+                            </div>
+                            <span className="text-sm font-medium">Ad</span>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
+                      </div>
+
+                      {/* Step 1: Create Campaign */}
+                      {wizardStep === 1 && (
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-semibold text-gray-900">Step 1: Campaign Details</h3>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Campaign Name *
+                            </label>
+                            <input
+                              type="text"
+                              value={campaignData.name}
+                              onChange={(e) => setCampaignData({ ...campaignData, name: e.target.value })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              placeholder="e.g., Summer Sale 2025"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Campaign Objective *
+                            </label>
+                            <select
+                              value={campaignData.objective}
+                              onChange={(e) => setCampaignData({ ...campaignData, objective: e.target.value })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                            >
+                              <option value="OUTCOME_ENGAGEMENT">Engagement</option>
+                              <option value="OUTCOME_LEADS">Leads</option>
+                              <option value="OUTCOME_TRAFFIC">Traffic</option>
+                              <option value="OUTCOME_AWARENESS">Awareness</option>
+                              <option value="OUTCOME_SALES">Sales</option>
+                            </select>
+                          </div>
+                          <div className="flex gap-3 pt-4">
+                            <button
+                              onClick={() => setShowCampaignWizard(false)}
+                              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={createCampaign}
+                              disabled={loading || !campaignData.name}
+                              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400"
+                            >
+                              {loading ? 'Creating...' : 'Next: Create Ad Set'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Step 2: Create Ad Set */}
+                      {wizardStep === 2 && (
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-semibold text-gray-900">Step 2: Ad Set Details</h3>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Ad Set Name *
+                            </label>
+                            <input
+                              type="text"
+                              value={adSetData.name}
+                              onChange={(e) => setAdSetData({ ...adSetData, name: e.target.value })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              placeholder="e.g., US Audience 18-65"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Daily Budget (USD) *
+                            </label>
+                            <input
+                              type="number"
+                              value={adSetData.dailyBudget}
+                              onChange={(e) => setAdSetData({ ...adSetData, dailyBudget: parseFloat(e.target.value) })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              min="1"
+                              step="0.01"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Min Age
+                              </label>
+                              <input
+                                type="number"
+                                value={adSetData.targeting.age_min}
+                                onChange={(e) => setAdSetData({
+                                  ...adSetData,
+                                  targeting: { ...adSetData.targeting, age_min: parseInt(e.target.value) }
+                                })}
+                                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                min="18"
+                                max="65"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Max Age
+                              </label>
+                              <input
+                                type="number"
+                                value={adSetData.targeting.age_max}
+                                onChange={(e) => setAdSetData({
+                                  ...adSetData,
+                                  targeting: { ...adSetData.targeting, age_max: parseInt(e.target.value) }
+                                })}
+                                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                min="18"
+                                max="65"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex gap-3 pt-4">
+                            <button
+                              onClick={() => setWizardStep(1)}
+                              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                            >
+                              Back
+                            </button>
+                            <button
+                              onClick={createAdSet}
+                              disabled={loading || !adSetData.name}
+                              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400"
+                            >
+                              {loading ? 'Creating...' : 'Next: Create Creative'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Step 3: Create Creative */}
+                      {wizardStep === 3 && (
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-semibold text-gray-900">Step 3: Ad Creative</h3>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Creative Name *
+                            </label>
+                            <input
+                              type="text"
+                              value={creativeData.name}
+                              onChange={(e) => setCreativeData({ ...creativeData, name: e.target.value })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              placeholder="e.g., Summer Sale Creative"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Ad Title
+                            </label>
+                            <input
+                              type="text"
+                              value={creativeData.title}
+                              onChange={(e) => setCreativeData({ ...creativeData, title: e.target.value })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              placeholder="Headline for your ad"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Ad Text/Body *
+                            </label>
+                            <textarea
+                              value={creativeData.body}
+                              onChange={(e) => setCreativeData({ ...creativeData, body: e.target.value })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm h-24"
+                              placeholder="Write your ad copy here..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Link URL
+                            </label>
+                            <input
+                              type="url"
+                              value={creativeData.linkUrl}
+                              onChange={(e) => setCreativeData({ ...creativeData, linkUrl: e.target.value })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              placeholder="https://your-website.com"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Image URL
+                            </label>
+                            <input
+                              type="url"
+                              value={creativeData.imageUrl}
+                              onChange={(e) => setCreativeData({ ...creativeData, imageUrl: e.target.value })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              placeholder="https://example.com/image.jpg"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Call to Action
+                            </label>
+                            <select
+                              value={creativeData.callToActionType}
+                              onChange={(e) => setCreativeData({ ...creativeData, callToActionType: e.target.value })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                            >
+                              <option value="LEARN_MORE">Learn More</option>
+                              <option value="SHOP_NOW">Shop Now</option>
+                              <option value="SIGN_UP">Sign Up</option>
+                              <option value="DOWNLOAD">Download</option>
+                              <option value="BOOK_TRAVEL">Book Travel</option>
+                              <option value="CONTACT_US">Contact Us</option>
+                            </select>
+                          </div>
+                          <div className="flex gap-3 pt-4">
+                            <button
+                              onClick={() => setWizardStep(2)}
+                              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                            >
+                              Back
+                            </button>
+                            <button
+                              onClick={createCreative}
+                              disabled={loading || !creativeData.name || !creativeData.body}
+                              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400"
+                            >
+                              {loading ? 'Creating...' : 'Next: Create Ad'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Step 4: Create Final Ad */}
+                      {wizardStep === 4 && (
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-semibold text-gray-900">Step 4: Final Ad</h3>
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+                            <p className="text-green-800 text-sm">
+                              ✓ Campaign created<br />
+                              ✓ Ad Set created<br />
+                              ✓ Creative created<br />
+                              Now create the final ad to complete your campaign!
+                            </p>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Ad Name *
+                            </label>
+                            <input
+                              type="text"
+                              value={adData.name}
+                              onChange={(e) => setAdData({ ...adData, name: e.target.value })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              placeholder="e.g., Summer Sale Ad #1"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Status
+                            </label>
+                            <select
+                              value={adData.status}
+                              onChange={(e) => setAdData({ ...adData, status: e.target.value })}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                            >
+                              <option value="PAUSED">Paused (Review before activating)</option>
+                              <option value="ACTIVE">Active (Start running immediately)</option>
+                            </select>
+                            <p className="mt-1 text-sm text-gray-500">
+                              Tip: Start with &quot;Paused&quot; to review everything in Facebook Ads Manager before activating.
+                            </p>
+                          </div>
+                          <div className="flex gap-3 pt-4">
+                            <button
+                              onClick={() => setWizardStep(3)}
+                              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                            >
+                              Back
+                            </button>
+                            <button
+                              onClick={createAd}
+                              disabled={loading || !adData.name}
+                              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400"
+                            >
+                              {loading ? 'Creating...' : '🚀 Complete Campaign'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
