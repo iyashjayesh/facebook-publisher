@@ -69,7 +69,7 @@ const PublishConfirmDialog: FC<PublishConfirmDialogProps> = ({
             margin: '0 0 16px 0',
             fontSize: '18px',
             fontWeight: 600,
-            color: '#111827'
+            color: '#000000'
           }}>
             📝 Confirm Post Publication
           </h3>
@@ -84,7 +84,7 @@ const PublishConfirmDialog: FC<PublishConfirmDialogProps> = ({
               margin: 0,
               whiteSpace: 'pre-wrap',
               lineHeight: '1.5',
-              color: '#374151',
+              color: '#000000',
               fontSize: '14px'
             }}>
               {message}
@@ -92,11 +92,11 @@ const PublishConfirmDialog: FC<PublishConfirmDialogProps> = ({
           </div>
           <p style={{
             fontSize: '14px',
-            color: '#6b7280',
+            color: '#000000',
             marginBottom: '20px',
             margin: '0 0 20px 0'
           }}>
-            Publishing to: <strong style={{ color: '#111827' }}>{pageName}</strong>
+            Publishing to: <strong style={{ color: '#000000' }}>{pageName}</strong>
           </p>
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
             <button
@@ -150,14 +150,14 @@ const PublishConfirmDialog: FC<PublishConfirmDialogProps> = ({
       {step === 'publishing' && (
         <div style={{ textAlign: 'center', padding: '20px 0' }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>⏳</div>
-          <p style={{ margin: 0, color: '#6b7280', fontSize: '16px' }}>Publishing your post...</p>
+          <p style={{ margin: 0, color: '#000000', fontSize: '16px' }}>Publishing your post...</p>
         </div>
       )}
 
       {step === 'done' && (
         <div style={{ textAlign: 'center', padding: '20px 0' }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>✅</div>
-          <p style={{ margin: 0, color: '#059669', fontWeight: 600, fontSize: '16px' }}>
+          <p style={{ margin: 0, color: '#000000', fontWeight: 600, fontSize: '16px' }}>
             Post Published Successfully!
           </p>
         </div>
@@ -166,7 +166,7 @@ const PublishConfirmDialog: FC<PublishConfirmDialogProps> = ({
       {step === 'error' && (
         <div style={{ textAlign: 'center', padding: '20px 0' }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>❌</div>
-          <p style={{ margin: 0, color: '#dc2626', fontWeight: 600, fontSize: '16px', marginBottom: '8px' }}>
+          <p style={{ margin: 0, color: '#000000', fontWeight: 600, fontSize: '16px', marginBottom: '8px' }}>
             Error: {errorMsg}
           </p>
         </div>
@@ -260,7 +260,7 @@ export default function Home() {
   // Campaign Creation States
   const [campaignData, setCampaignData] = useState({
     name: '',
-    objective: 'OUTCOME_ENGAGEMENT',
+    objective: 'OUTCOME_TRAFFIC',
     status: 'PAUSED'
   });
   const [createdCampaignId, setCreatedCampaignId] = useState('');
@@ -270,7 +270,7 @@ export default function Home() {
     name: '',
     dailyBudget: 10,
     billingEvent: 'IMPRESSIONS',
-    optimizationGoal: 'REACH',
+    optimizationGoal: 'REACH', // Changed to REACH which works with all objectives
     targeting: {
       geo_locations: { countries: ['US'] },
       age_min: 18,
@@ -757,12 +757,12 @@ export default function Home() {
         setCreatedCampaignId('');
         setCreatedAdSetId('');
         setCreatedCreativeId('');
-        setCampaignData({ name: '', objective: 'OUTCOME_ENGAGEMENT', status: 'PAUSED' });
+        setCampaignData({ name: '', objective: 'OUTCOME_TRAFFIC', status: 'PAUSED' });
         setAdSetData({
           name: '',
           dailyBudget: 10,
           billingEvent: 'IMPRESSIONS',
-          optimizationGoal: 'REACH',
+          optimizationGoal: 'REACH', // Changed to REACH which works with all objectives
           targeting: {
             geo_locations: { countries: ['US'] },
             age_min: 18,
@@ -792,12 +792,156 @@ export default function Home() {
     }
   };
 
+  // Check account balance and payment status before activation
+  const checkAccountBalance = async (): Promise<{ canRunAds: boolean; errors: string[]; warnings: string[] }> => {
+    if (!selectedAdAccount || !userToken) {
+      return { canRunAds: false, errors: ['No ad account selected'], warnings: [] };
+    }
+
+    try {
+      const response = await axios.post("/api/facebook/campaigns/check-account-balance", {
+        accountId: selectedAdAccount.account_id,
+        accessToken: userToken,
+      });
+
+      if (response.data.success) {
+        return {
+          canRunAds: response.data.canRunAds,
+          errors: response.data.errors || [],
+          warnings: response.data.warnings || []
+        };
+      }
+      return { canRunAds: false, errors: ['Failed to check account status'], warnings: [] };
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+      return { canRunAds: false, errors: [errorMessage], warnings: [] };
+    }
+  };
+
+  // Activate campaign with balance check
+  const handleActivateCampaign = async (campaignId: string) => {
+    try {
+      setLoading(true);
+      setError("");
+
+      // First check account balance
+      const balanceCheck = await checkAccountBalance();
+
+      if (!balanceCheck.canRunAds) {
+        let errorMsg = "⚠️ Cannot activate campaign:\n\n";
+        errorMsg += balanceCheck.errors.join('\n');
+
+        if (balanceCheck.errors.some(e => e.includes('payment method'))) {
+          errorMsg += "\n\n📝 Please add a payment method at:\nhttps://business.facebook.com/billing_hub/payment_methods";
+        }
+
+        alert(errorMsg);
+        setLoading(false);
+        return;
+      }
+
+      // Show warnings if any
+      if (balanceCheck.warnings.length > 0) {
+        const proceed = confirm(
+          "⚠️ Warnings:\n\n" +
+          balanceCheck.warnings.join('\n') +
+          "\n\nDo you want to proceed with activation?"
+        );
+        if (!proceed) {
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Proceed with activation
+      const response = await axios.post("/api/facebook/campaigns/update-campaign", {
+        accountId: selectedAdAccount?.account_id,
+        accessToken: userToken,
+        campaignId,
+        status: 'ACTIVE'
+      });
+
+      if (response.data.success) {
+        alert("✅ Campaign activated successfully!");
+        fetchCampaigns(); // Refresh the list
+      }
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+      setError("Failed to activate campaign: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Pause campaign
+  const handlePauseCampaign = async (campaignId: string) => {
+    if (!confirm('Are you sure you want to pause this campaign?')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const response = await axios.post("/api/facebook/campaigns/update-campaign", {
+        accountId: selectedAdAccount?.account_id,
+        accessToken: userToken,
+        campaignId,
+        status: 'PAUSED'
+      });
+
+      if (response.data.success) {
+        alert("Campaign paused successfully!");
+        fetchCampaigns(); // Refresh the list
+      }
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+      setError("Failed to pause campaign: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Delete campaign
+  const handleDeleteCampaign = async (campaignId: string) => {
+    if (!confirm('⚠️ Are you sure you want to delete this campaign? This action cannot be undone!')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const response = await axios.post("/api/facebook/campaigns/delete-campaign", {
+        accountId: selectedAdAccount?.account_id,
+        accessToken: userToken,
+        campaignId
+      });
+
+      if (response.data.success) {
+        alert("✅ Campaign deleted successfully!");
+        fetchCampaigns(); // Refresh the list
+      }
+    } catch (err) {
+      const errorMessage = err instanceof AxiosError
+        ? err.response?.data?.error || err.message
+        : "An unknown error occurred";
+      setError("Failed to delete campaign: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
           <div className="flex items-center justify-between mb-8">
-            <h1 className="text-3xl font-bold text-gray-900">Facebook Publisher</h1>
+            <h1 className="text-3xl font-bold text-black">Facebook Publisher</h1>
             {pages.length > 0 && (
               <div className="flex gap-3">
                 <button
@@ -812,14 +956,14 @@ export default function Home() {
           </div>
 
           {error && (
-            <div className="mb-8 bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded">
+            <div className="mb-8 bg-red-100 border-l-4 border-red-500 text-black p-4 rounded">
               {error}
             </div>
           )}
 
           {!pages.length ? (
             <div className="flex flex-col items-center justify-center min-h-[400px] bg-white rounded-lg shadow-sm p-8">
-              <h2 className="text-xl font-semibold text-gray-700 mb-6">Welcome to Facebook Publisher</h2>
+              <h2 className="text-xl font-semibold text-black mb-6">Welcome to Facebook Publisher</h2>
               <button
                 className="inline-flex items-center px-6 py-3 bg-blue-600 text-white text-base font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 onClick={loginWithFacebook}
@@ -861,14 +1005,14 @@ export default function Home() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* Publisher Form */}
                   <div className="bg-white rounded-lg shadow-sm p-6">
-                    <h2 className="text-xl font-semibold text-gray-900 mb-6">Create New Post</h2>
+                    <h2 className="text-xl font-semibold text-black mb-6">Create New Post</h2>
                     <div className="space-y-6">
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-black mb-2">
                           Select Page
                         </label>
                         <select
-                          className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
+                          className="mt-1 block w-full pl-3 pr-10 py-2 text-base text-black border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 rounded-md"
                           onChange={(e) => handlePageSelect(pages[e.target.value])}
                           value={selectedPage ? pages.indexOf(selectedPage) : ""}
                         >
@@ -882,19 +1026,19 @@ export default function Home() {
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-black mb-2">
                           Message
                         </label>
                         <textarea
                           placeholder="What's on your mind?"
                           value={message}
                           onChange={(e) => setMessage(e.target.value)}
-                          className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm h-32"
+                          className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm h-32"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-black mb-2">
                           Media URL
                         </label>
                         <input
@@ -902,7 +1046,7 @@ export default function Home() {
                           placeholder="Enter image URL"
                           value={mediaUrl}
                           onChange={(e) => setMediaUrl(e.target.value)}
-                          className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                          className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
                         />
                       </div>
 
@@ -928,15 +1072,15 @@ export default function Home() {
 
                   {/* Posts List */}
                   <div className="bg-white rounded-lg shadow-sm p-6">
-                    <h2 className="text-xl font-semibold text-gray-900 mb-6">Recent Posts</h2>
+                    <h2 className="text-xl font-semibold text-black mb-6">Recent Posts</h2>
                     {loading ? (
                       <div className="text-center py-12">
                         <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-                        <p className="mt-4 text-gray-600">Loading posts...</p>
+                        <p className="mt-4 text-black">Loading posts...</p>
                       </div>
                     ) : posts.length === 0 ? (
                       <div className="text-center py-12">
-                        <p className="text-gray-600 text-lg">No posts found for this page.</p>
+                        <p className="text-black text-lg">No posts found for this page.</p>
                       </div>
                     ) : (
                       <div className="space-y-6">
@@ -955,11 +1099,11 @@ export default function Home() {
                                 />
                               )}
                               <div className="p-4">
-                                <p className="text-gray-800 mb-3 line-clamp-3">
+                                <p className="text-black mb-3 line-clamp-3">
                                   {post.message || "(No text content)"}
                                 </p>
 
-                                <div className="flex gap-4 text-sm text-gray-600 mb-3">
+                                <div className="flex gap-4 text-sm text-black mb-3">
                                   {post.reactions && (
                                     <span>👍 {post.reactions.summary.total_count}</span>
                                   )}
@@ -971,7 +1115,7 @@ export default function Home() {
                                   )}
                                 </div>
 
-                                <p className="text-xs text-gray-500 mb-3">
+                                <p className="text-xs text-black mb-3">
                                   {formatDate(post.created_time)}
                                 </p>
 
@@ -1007,20 +1151,20 @@ export default function Home() {
                 <div className="space-y-6">
                   {/* Ad Account Selection */}
                   <div className="bg-white rounded-lg shadow-sm p-6">
-                    <h2 className="text-xl font-semibold text-gray-900 mb-4">Select Ad Account</h2>
+                    <h2 className="text-xl font-semibold text-black mb-4">Select Ad Account</h2>
                     {adAccounts.length === 0 ? (
                       <div className="text-center py-8">
-                        <p className="text-gray-600 mb-4">
+                        <p className="text-black mb-4">
                           {loading ? 'Loading ad accounts...' : 'No ad accounts found.'}
                         </p>
                       </div>
                     ) : (
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-black mb-2">
                           Ad Account
                         </label>
                         <select
-                          className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 rounded-md"
+                          className="mt-1 block w-full pl-3 pr-10 py-2 text-base text-black border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 rounded-md"
                           onChange={(e) => setSelectedAdAccount(adAccounts[parseInt(e.target.value)])}
                           value={selectedAdAccount ? adAccounts.indexOf(selectedAdAccount) : ""}
                         >
@@ -1039,7 +1183,7 @@ export default function Home() {
                   {selectedAdAccount && !showCampaignWizard && (
                     <div className="bg-white rounded-lg shadow-sm p-6">
                       <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-xl font-semibold text-gray-900">Your Campaigns</h2>
+                        <h2 className="text-xl font-semibold text-black">Your Campaigns</h2>
                         <button
                           onClick={() => setShowCampaignWizard(true)}
                           className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium"
@@ -1052,20 +1196,52 @@ export default function Home() {
                       <div className="space-y-4">
                         {campaigns.length === 0 ? (
                           <div className="text-center py-8">
-                            <p className="text-gray-600">No campaigns found. Create your first campaign!</p>
+                            <p className="text-black">No campaigns found. Create your first campaign!</p>
                           </div>
                         ) : (
                           campaigns.map((campaign) => (
-                            <div key={campaign.id} className="border border-gray-200 rounded-lg p-4">
+                            <div key={campaign.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
                               <div className="flex items-center justify-between">
-                                <div>
-                                  <h3 className="font-semibold text-gray-900">{campaign.name}</h3>
-                                  <p className="text-sm text-gray-600">
-                                    Objective: {campaign.objective} | Status: <span className={campaign.status === 'ACTIVE' ? 'text-green-600' : 'text-gray-600'}>{campaign.status}</span>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <h3 className="font-semibold text-black">{campaign.name}</h3>
+                                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${campaign.status === 'ACTIVE' ? 'bg-green-100 text-black' :
+                                      campaign.status === 'PAUSED' ? 'bg-yellow-100 text-black' :
+                                        'bg-gray-100 text-black'
+                                      }`}>
+                                      {campaign.status}
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-black mt-1">
+                                    Objective: {campaign.objective}
                                   </p>
-                                  <p className="text-xs text-gray-500 mt-1">
+                                  <p className="text-xs text-black mt-1">
                                     Created: {formatDate(campaign.created_time)}
                                   </p>
+                                </div>
+                                <div className="flex gap-2 ml-4">
+                                  {campaign.status === 'PAUSED' && (
+                                    <button
+                                      onClick={() => handleActivateCampaign(campaign.id)}
+                                      className="px-3 py-1.5 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 font-medium"
+                                    >
+                                      ▶ Activate
+                                    </button>
+                                  )}
+                                  {campaign.status === 'ACTIVE' && (
+                                    <button
+                                      onClick={() => handlePauseCampaign(campaign.id)}
+                                      className="px-3 py-1.5 bg-yellow-600 text-white text-sm rounded-md hover:bg-yellow-700 font-medium"
+                                    >
+                                      ⏸ Pause
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => handleDeleteCampaign(campaign.id)}
+                                    className="px-3 py-1.5 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 font-medium"
+                                  >
+                                    🗑️ Delete
+                                  </button>
                                 </div>
                               </div>
                             </div>
@@ -1079,7 +1255,7 @@ export default function Home() {
                   {showCampaignWizard && selectedAdAccount && (
                     <div className="bg-white rounded-lg shadow-sm p-6">
                       <div className="mb-6">
-                        <h2 className="text-xl font-semibold text-gray-900 mb-4">Create Ad Campaign</h2>
+                        <h2 className="text-xl font-semibold text-black mb-4">Create Ad Campaign</h2>
 
                         {/* Wizard Steps Indicator */}
                         <div className="flex items-center justify-between mb-8">
@@ -1087,7 +1263,7 @@ export default function Home() {
                             <div className={`w-8 h-8 rounded-full flex items-center justify-center ${wizardStep >= 1 ? 'bg-blue-600 text-white' : 'bg-gray-300'}`}>
                               1
                             </div>
-                            <span className="text-sm font-medium">Campaign</span>
+                            <span className="text-sm text-black font-medium">Campaign</span>
                           </div>
                           <div className="flex-1 h-1 bg-gray-300 mx-2">
                             <div className={`h-full ${wizardStep >= 2 ? 'bg-blue-600' : ''}`} style={{ width: wizardStep >= 2 ? '100%' : '0%' }}></div>
@@ -1096,7 +1272,7 @@ export default function Home() {
                             <div className={`w-8 h-8 rounded-full flex items-center justify-center ${wizardStep >= 2 ? 'bg-blue-600 text-white' : 'bg-gray-300'}`}>
                               2
                             </div>
-                            <span className="text-sm font-medium">Ad Set</span>
+                            <span className="text-sm text-black font-medium">Ad Set</span>
                           </div>
                           <div className="flex-1 h-1 bg-gray-300 mx-2">
                             <div className={`h-full ${wizardStep >= 3 ? 'bg-blue-600' : ''}`} style={{ width: wizardStep >= 3 ? '100%' : '0%' }}></div>
@@ -1105,7 +1281,7 @@ export default function Home() {
                             <div className={`w-8 h-8 rounded-full flex items-center justify-center ${wizardStep >= 3 ? 'bg-blue-600 text-white' : 'bg-gray-300'}`}>
                               3
                             </div>
-                            <span className="text-sm font-medium">Creative</span>
+                            <span className="text-sm text-black font-medium">Creative</span>
                           </div>
                           <div className="flex-1 h-1 bg-gray-300 mx-2">
                             <div className={`h-full ${wizardStep >= 4 ? 'bg-blue-600' : ''}`} style={{ width: wizardStep >= 4 ? '100%' : '0%' }}></div>
@@ -1114,7 +1290,7 @@ export default function Home() {
                             <div className={`w-8 h-8 rounded-full flex items-center justify-center ${wizardStep >= 4 ? 'bg-blue-600 text-white' : 'bg-gray-300'}`}>
                               4
                             </div>
-                            <span className="text-sm font-medium">Ad</span>
+                            <span className="text-sm text-black font-medium">Ad</span>
                           </div>
                         </div>
                       </div>
@@ -1122,39 +1298,48 @@ export default function Home() {
                       {/* Step 1: Create Campaign */}
                       {wizardStep === 1 && (
                         <div className="space-y-4">
-                          <h3 className="text-lg font-semibold text-gray-900">Step 1: Campaign Details</h3>
+                          <h3 className="text-lg font-semibold text-black">Step 1: Campaign Details</h3>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-black mb-2">
                               Campaign Name *
                             </label>
                             <input
                               type="text"
                               value={campaignData.name}
                               onChange={(e) => setCampaignData({ ...campaignData, name: e.target.value })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              className="mt-1 block text-black w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                               placeholder="e.g., Summer Sale 2025"
+                              required
                             />
+                            <p className="mt-1 text-xs text-black">
+                              Required: Helps you identify and organize your campaigns
+                            </p>
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-black mb-2">
                               Campaign Objective *
                             </label>
                             <select
                               value={campaignData.objective}
                               onChange={(e) => setCampaignData({ ...campaignData, objective: e.target.value })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              required
                             >
-                              <option value="OUTCOME_ENGAGEMENT">Engagement</option>
-                              <option value="OUTCOME_LEADS">Leads</option>
-                              <option value="OUTCOME_TRAFFIC">Traffic</option>
-                              <option value="OUTCOME_AWARENESS">Awareness</option>
-                              <option value="OUTCOME_SALES">Sales</option>
+                              <option value="OUTCOME_TRAFFIC">Traffic - Drive traffic to your website or app</option>
+                              <option value="OUTCOME_AWARENESS">Awareness - Increase brand awareness and reach</option>
+                              <option value="OUTCOME_ENGAGEMENT">Engagement - Get likes, comments, shares and interactions</option>
+                              <option value="OUTCOME_LEADS">Leads - Collect leads and contacts</option>
+                              <option value="OUTCOME_SALES">Sales - Drive purchases and conversions</option>
+                              <option value="OUTCOME_APP_PROMOTION">App Promotion - Get app installs and engagement</option>
                             </select>
+                            <p className="mt-1 text-xs text-black">
+                              Required: Tells Facebook how to optimize your ad delivery and who to show ads to
+                            </p>
                           </div>
                           <div className="flex gap-3 pt-4">
                             <button
                               onClick={() => setShowCampaignWizard(false)}
-                              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                              className="px-4 py-2 border border-gray-300 rounded-md text-black hover:bg-gray-50"
                             >
                               Cancel
                             </button>
@@ -1172,35 +1357,43 @@ export default function Home() {
                       {/* Step 2: Create Ad Set */}
                       {wizardStep === 2 && (
                         <div className="space-y-4">
-                          <h3 className="text-lg font-semibold text-gray-900">Step 2: Ad Set Details</h3>
+                          <h3 className="text-lg font-semibold text-black">Step 2: Ad Set Details</h3>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-black mb-2">
                               Ad Set Name *
                             </label>
                             <input
                               type="text"
                               value={adSetData.name}
                               onChange={(e) => setAdSetData({ ...adSetData, name: e.target.value })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                               placeholder="e.g., US Audience 18-65"
+                              required
                             />
+                            <p className="mt-1 text-xs text-black">
+                              Required: Helps you identify your audience targeting and budget settings
+                            </p>
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-black mb-2">
                               Daily Budget (USD) *
                             </label>
                             <input
                               type="number"
                               value={adSetData.dailyBudget}
                               onChange={(e) => setAdSetData({ ...adSetData, dailyBudget: parseFloat(e.target.value) })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                               min="1"
                               step="0.01"
+                              required
                             />
+                            <p className="mt-1 text-xs text-black">
+                              Required: Maximum amount you&apos;ll spend per day. Facebook requires at least $1/day
+                            </p>
                           </div>
                           <div className="grid grid-cols-2 gap-4">
                             <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                              <label className="block text-sm font-medium text-black mb-2">
                                 Min Age
                               </label>
                               <input
@@ -1210,13 +1403,13 @@ export default function Home() {
                                   ...adSetData,
                                   targeting: { ...adSetData.targeting, age_min: parseInt(e.target.value) }
                                 })}
-                                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                                 min="18"
                                 max="65"
                               />
                             </div>
                             <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                              <label className="block text-sm font-medium text-black mb-2">
                                 Max Age
                               </label>
                               <input
@@ -1226,7 +1419,7 @@ export default function Home() {
                                   ...adSetData,
                                   targeting: { ...adSetData.targeting, age_max: parseInt(e.target.value) }
                                 })}
-                                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                                 min="18"
                                 max="65"
                               />
@@ -1235,7 +1428,7 @@ export default function Home() {
                           <div className="flex gap-3 pt-4">
                             <button
                               onClick={() => setWizardStep(1)}
-                              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                              className="px-4 py-2 border border-gray-300 rounded-md text-black hover:bg-gray-50"
                             >
                               Back
                             </button>
@@ -1253,74 +1446,82 @@ export default function Home() {
                       {/* Step 3: Create Creative */}
                       {wizardStep === 3 && (
                         <div className="space-y-4">
-                          <h3 className="text-lg font-semibold text-gray-900">Step 3: Ad Creative</h3>
+                          <h3 className="text-lg font-semibold text-black">Step 3: Ad Creative</h3>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-black mb-2">
                               Creative Name *
                             </label>
                             <input
                               type="text"
                               value={creativeData.name}
                               onChange={(e) => setCreativeData({ ...creativeData, name: e.target.value })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                               placeholder="e.g., Summer Sale Creative"
+                              required
                             />
+                            <p className="mt-1 text-xs text-black">
+                              Required: Internal name to identify this creative asset in your ad account
+                            </p>
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-black mb-2">
                               Ad Title
                             </label>
                             <input
                               type="text"
                               value={creativeData.title}
                               onChange={(e) => setCreativeData({ ...creativeData, title: e.target.value })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                               placeholder="Headline for your ad"
                             />
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-black mb-2">
                               Ad Text/Body *
                             </label>
                             <textarea
                               value={creativeData.body}
                               onChange={(e) => setCreativeData({ ...creativeData, body: e.target.value })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm h-24"
+                              className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm h-24"
                               placeholder="Write your ad copy here..."
+                              required
                             />
+                            <p className="mt-1 text-xs text-black">
+                              Required: This is the main message that appears in your ad
+                            </p>
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-black mb-2">
                               Link URL
                             </label>
                             <input
                               type="url"
                               value={creativeData.linkUrl}
                               onChange={(e) => setCreativeData({ ...creativeData, linkUrl: e.target.value })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                               placeholder="https://your-website.com"
                             />
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-black mb-2">
                               Image URL
                             </label>
                             <input
                               type="url"
                               value={creativeData.imageUrl}
                               onChange={(e) => setCreativeData({ ...creativeData, imageUrl: e.target.value })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                               placeholder="https://example.com/image.jpg"
                             />
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-black mb-2">
                               Call to Action
                             </label>
                             <select
                               value={creativeData.callToActionType}
                               onChange={(e) => setCreativeData({ ...creativeData, callToActionType: e.target.value })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                             >
                               <option value="LEARN_MORE">Learn More</option>
                               <option value="SHOP_NOW">Shop Now</option>
@@ -1333,7 +1534,7 @@ export default function Home() {
                           <div className="flex gap-3 pt-4">
                             <button
                               onClick={() => setWizardStep(2)}
-                              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                              className="px-4 py-2 border border-gray-300 rounded-md text-black hover:bg-gray-50"
                             >
                               Back
                             </button>
@@ -1351,9 +1552,9 @@ export default function Home() {
                       {/* Step 4: Create Final Ad */}
                       {wizardStep === 4 && (
                         <div className="space-y-4">
-                          <h3 className="text-lg font-semibold text-gray-900">Step 4: Final Ad</h3>
+                          <h3 className="text-lg font-semibold text-black">Step 4: Final Ad</h3>
                           <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-                            <p className="text-green-800 text-sm">
+                            <p className="text-black text-sm">
                               ✓ Campaign created<br />
                               ✓ Ad Set created<br />
                               ✓ Creative created<br />
@@ -1361,37 +1562,31 @@ export default function Home() {
                             </p>
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-black mb-2">
                               Ad Name *
                             </label>
                             <input
                               type="text"
                               value={adData.name}
                               onChange={(e) => setAdData({ ...adData, name: e.target.value })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              className="mt-1 block w-full text-black border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                               placeholder="e.g., Summer Sale Ad #1"
+                              required
                             />
+                            <p className="mt-1 text-xs text-black">
+                              Required: Helps you track and manage individual ads within your ad set
+                            </p>
                           </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Status
-                            </label>
-                            <select
-                              value={adData.status}
-                              onChange={(e) => setAdData({ ...adData, status: e.target.value })}
-                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                            >
-                              <option value="PAUSED">Paused (Review before activating)</option>
-                              <option value="ACTIVE">Active (Start running immediately)</option>
-                            </select>
-                            <p className="mt-1 text-sm text-gray-500">
-                              Tip: Start with &quot;Paused&quot; to review everything in Facebook Ads Manager before activating.
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <p className="text-black text-sm">
+                              <strong>📋 Draft Mode:</strong> Your campaign will be created in PAUSED state.
+                              You can review and activate it after creation once we verify your payment method is set up.
                             </p>
                           </div>
                           <div className="flex gap-3 pt-4">
                             <button
                               onClick={() => setWizardStep(3)}
-                              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                              className="px-4 py-2 border border-gray-300 rounded-md text-black hover:bg-gray-50"
                             >
                               Back
                             </button>

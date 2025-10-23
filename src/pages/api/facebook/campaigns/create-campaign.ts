@@ -7,7 +7,6 @@ interface CreateCampaignRequest {
     name: string;
     objective: string;
     status?: string;
-    special_ad_categories?: string[];
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -20,8 +19,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         accessToken,
         name,
         objective,
-        status = 'PAUSED',
-        special_ad_categories = []
+        status = 'PAUSED'
     } = req.body as CreateCampaignRequest;
 
     if (!accountId || !accessToken || !name || !objective) {
@@ -31,24 +29,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     try {
-        const endpoint = `https://graph.facebook.com/v18.0/act_${accountId}/campaigns`;
+        const endpoint = `https://graph.facebook.com/v22.0/act_${accountId}/campaigns`;
 
-        const params = {
+        // Basic ad creation as per Facebook documentation
+        // https://developers.facebook.com/docs/marketing-api/get-started/basic-ad-creation
+        const formData = new URLSearchParams({
             name,
             objective,
             status,
-            special_ad_categories,
+            special_ad_categories: '[]', // Empty array for standard ads
+            is_adset_budget_sharing_enabled: 'false', // Disable budget sharing across ad sets
             access_token: accessToken
-        };
+        });
 
-        console.log('Creating campaign with params:', {
+        console.log('Creating campaign:', {
             accountId,
             name,
             objective,
             status
         });
 
-        const response = await axios.post(endpoint, null, { params });
+        const response = await axios.post(endpoint, formData, {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        });
 
         return res.status(200).json({
             success: true,

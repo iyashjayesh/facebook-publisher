@@ -46,7 +46,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     try {
-        const endpoint = `https://graph.facebook.com/v18.0/act_${accountId}/adcreatives`;
+        const endpoint = `https://graph.facebook.com/v22.0/act_${accountId}/adcreatives`;
 
         // Build object_story_spec
         const objectStorySpec: any = {
@@ -96,19 +96,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
         }
 
-        const params = {
-            name,
-            object_story_spec: JSON.stringify(objectStorySpec),
-            access_token: accessToken
-        };
-
         console.log('Creating ad creative with params:', {
             accountId,
             name,
             pageId
         });
 
-        const response = await axios.post(endpoint, null, { params });
+        const formData = new URLSearchParams({
+            name,
+            object_story_spec: JSON.stringify(objectStorySpec),
+            access_token: accessToken
+        });
+
+        const response = await axios.post(endpoint, formData, {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        });
 
         return res.status(200).json({
             success: true,

@@ -1,13 +1,13 @@
 import axios from "axios";
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-interface CreateAdRequest {
+interface UpdateCampaignRequest {
     accountId: string;
     accessToken: string;
-    name: string;
-    adsetId: string;
-    creativeId: string;
+    campaignId: string;
+    name?: string;
     status?: string;
+    objective?: string;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -18,36 +18,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const {
         accountId,
         accessToken,
+        campaignId,
         name,
-        adsetId,
-        creativeId,
-        status = 'PAUSED'
-    } = req.body as CreateAdRequest;
+        status,
+        objective
+    } = req.body as UpdateCampaignRequest;
 
-    if (!accountId || !accessToken || !name || !adsetId || !creativeId) {
+    if (!accountId || !accessToken || !campaignId) {
         return res.status(400).json({
-            error: "Account ID, Access Token, Name, Ad Set ID, and Creative ID are required"
+            error: "Account ID, Access Token, and Campaign ID are required"
         });
     }
 
     try {
-        const endpoint = `https://graph.facebook.com/v22.0/act_${accountId}/ads`;
+        const endpoint = `https://graph.facebook.com/v22.0/${campaignId}`;
 
-        console.log('Creating ad with params:', {
-            accountId,
-            name,
-            adsetId,
-            creativeId,
-            status
-        });
-
-        const formData = new URLSearchParams({
-            name,
-            adset_id: adsetId,
-            creative: JSON.stringify({ creative_id: creativeId }),
-            status,
+        const updateParams: any = {
             access_token: accessToken
+        };
+
+        if (name) updateParams.name = name;
+        if (status) updateParams.status = status;
+        if (objective) updateParams.objective = objective;
+
+        console.log('Updating campaign:', {
+            campaignId,
+            updates: updateParams
         });
+
+        const formData = new URLSearchParams(updateParams);
 
         const response = await axios.post(endpoint, formData, {
             headers: {
@@ -57,8 +56,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         return res.status(200).json({
             success: true,
-            ad: response.data,
-            message: 'Ad created successfully'
+            campaign: response.data,
+            message: 'Campaign updated successfully'
         });
     } catch (err: any) {
         console.error('Facebook Marketing API Error:', err.response?.data || err.message);

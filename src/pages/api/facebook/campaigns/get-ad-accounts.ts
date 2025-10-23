@@ -19,7 +19,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     try {
-        const endpoint = `https://graph.facebook.com/v18.0/me/adaccounts`;
+        const endpoint = `https://graph.facebook.com/v22.0/me/adaccounts`;
 
         const params = {
             fields: 'id,name,account_id,account_status,currency,timezone_name',

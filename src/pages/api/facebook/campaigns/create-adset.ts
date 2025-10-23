@@ -61,47 +61,57 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     try {
-        const endpoint = `https://graph.facebook.com/v18.0/act_${accountId}/adsets`;
+        const endpoint = `https://graph.facebook.com/v22.0/act_${accountId}/adsets`;
 
-        const params: any = {
+        // Basic ad set creation as per Facebook documentation
+        // https://developers.facebook.com/docs/marketing-api/get-started/basic-ad-creation
+        const formParams: any = {
             name,
             campaign_id: campaignId,
             billing_event: billingEvent,
             optimization_goal: optimizationGoal,
+            bid_strategy: 'LOWEST_COST_WITHOUT_CAP', // Required for budget optimization
             status,
             targeting: JSON.stringify(targeting),
+            promoted_object: JSON.stringify({}), // Required for some objectives
             access_token: accessToken
         };
 
         // Budget must be in cents
         if (dailyBudget) {
-            params.daily_budget = Math.round(dailyBudget * 100);
+            formParams.daily_budget = Math.round(dailyBudget * 100).toString();
         }
         if (lifetimeBudget) {
-            params.lifetime_budget = Math.round(lifetimeBudget * 100);
+            formParams.lifetime_budget = Math.round(lifetimeBudget * 100).toString();
         }
 
         if (bidAmount) {
-            params.bid_amount = Math.round(bidAmount * 100);
+            formParams.bid_amount = Math.round(bidAmount * 100).toString();
         }
 
         if (startTime) {
-            params.start_time = startTime;
+            formParams.start_time = startTime;
         }
 
         if (endTime) {
-            params.end_time = endTime;
+            formParams.end_time = endTime;
         }
 
-        console.log('Creating ad set with params:', {
+        console.log('Creating ad set:', {
             accountId,
             campaignId,
             name,
-            dailyBudget,
-            lifetimeBudget
+            dailyBudget: dailyBudget ? `$${dailyBudget}` : undefined,
+            lifetimeBudget: lifetimeBudget ? `$${lifetimeBudget}` : undefined
         });
 
-        const response = await axios.post(endpoint, null, { params });
+        const formData = new URLSearchParams(formParams);
+
+        const response = await axios.post(endpoint, formData, {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        });
 
         return res.status(200).json({
             success: true,

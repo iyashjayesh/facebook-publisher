@@ -1,10 +1,10 @@
 import axios from "axios";
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-interface ListCampaignsRequest {
+interface DeleteCampaignRequest {
     accountId: string;
     accessToken: string;
-    limit?: number;
+    campaignId: string;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -15,32 +15,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const {
         accountId,
         accessToken,
-        limit = 25
-    } = req.body as ListCampaignsRequest;
+        campaignId
+    } = req.body as DeleteCampaignRequest;
 
-    if (!accountId || !accessToken) {
+    if (!accountId || !accessToken || !campaignId) {
         return res.status(400).json({
-            error: "Account ID and Access Token are required"
+            error: "Account ID, Access Token, and Campaign ID are required"
         });
     }
 
     try {
-        const endpoint = `https://graph.facebook.com/v22.0/act_${accountId}/campaigns`;
+        const endpoint = `https://graph.facebook.com/v22.0/${campaignId}`;
 
-        const params = {
-            fields: 'id,name,objective,status,created_time,updated_time,daily_budget,lifetime_budget,insights{spend,impressions,clicks,ctr,cpc,cpm}',
-            limit,
-            access_token: accessToken
-        };
+        console.log('Deleting campaign:', {
+            campaignId
+        });
 
-        console.log('Fetching campaigns for account:', accountId);
-
-        const response = await axios.get(endpoint, { params });
+        const response = await axios.delete(endpoint, {
+            params: {
+                access_token: accessToken
+            }
+        });
 
         return res.status(200).json({
             success: true,
-            campaigns: response.data.data,
-            paging: response.data.paging
+            result: response.data,
+            message: 'Campaign deleted successfully'
         });
     } catch (err: any) {
         console.error('Facebook Marketing API Error:', err.response?.data || err.message);
